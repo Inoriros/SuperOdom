@@ -1,14 +1,31 @@
 # Author: TaeYoung Kim
 # email: tyoung96@yonsei.ac.kr
 
-FROM osrf/ros:humble-desktop-full
+FROM --platform=linux/arm64 ubuntu:22.04
+
+ARG DEBIAN_FRONTEND=noninteractive
 
 ENV NVIDIA_VISIBLE_DEVICES \
     ${NVIDIA_VISIBLE_DEVICES:-all}
 ENV NVIDIA_DRIVER_CAPABILITIES \
     ${NVIDIA_DRIVER_CAPABILITIES:+$NVIDIA_DRIVER_CAPABILITIES,}graphics
-    
-    
+
+# Install ROS2 Humble
+RUN apt-get update && apt-get install -y \
+    software-properties-common \
+    gnupg \
+    lsb-release \
+    curl \
+    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=arm64 signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/ros2.list > /dev/null \
+    && apt-get update \
+    && apt-get install -y ros-humble-desktop-full \
+    python3-colcon-common-extensions \
+    python3-colcon-core \
+    python3-colcon-ros \
+    python3-colcon-test-result \
+    && apt-get clean
+
 # Install PCL & Eigen & essential libraries
 RUN apt-get update \
  && apt-get install -y \
@@ -24,12 +41,10 @@ RUN apt-get update \
         curl \
         less \
         htop \
-        libsm6 libxext6 libgl1-mesa-glx libxrender-dev \ 
-        curl \
+        libsm6 libxext6 libgl1-mesa-glx libxrender-dev \
  && apt-get clean
 
-RUN export DEBIAN_FRONTEND=noninteractive \
- && sudo apt-get update \
+RUN sudo apt-get update \
  && sudo -E apt-get install -y \
     tzdata \
  && sudo ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime \
@@ -46,13 +61,14 @@ RUN apt-get install -y libceres-dev
 RUN apt-get install -y python-tk python3-pip
 
 # Python 3.
-RUN pip3 install --upgrade pip
+RUN pip3 install --upgrade pip setuptools wheel
 RUN pip3 install --no-cache-dir numpy scipy matplotlib ipython opencv-python 
-RUN pip3 install --no-cache-dir pandas visdom scikit-image scikit-learn numba Pillow
+RUN pip3 install --no-cache-dir pandas scikit-image scikit-learn numba Pillow
+RUN pip3 install --no-cache-dir --no-build-isolation visdom
 RUN pip3 install --no-cache-dir pyyaml pycryptodome bagpy Cython
 
 RUN apt-get -y install python3-rosdep python3-rosinstall python3-rosinstall-generator python3-wstool build-essential
-# RUN sudo rosdep init
+RUN rosdep init
 RUN rosdep update
 RUN pip3 install -U catkin_tools gym
 RUN apt-get -y install ros-humble-grid-map-msgs ros-humble-grid-map
@@ -88,7 +104,39 @@ RUN /bin/bash -c '. /opt/ros/humble/setup.bash;'
 RUN pip install rerun-sdk
 RUN pip install numpy==1.24.3 matplotlib==3.7.1
 RUN pip install --upgrade packaging
-RUN pip3 install torch --ignore-installed
+
+# Install Intel RealSense SDK
+RUN set -eux; \
+        mkdir -p /etc/apt/keyrings; \
+        export GNUPGHOME="$(mktemp -d)"; \
+        gpg --batch --keyserver keyserver.ubuntu.com --recv-keys \
+            F6E65AC044F831AC80A06380C8B3A55A6F3EFCDE \
+            FB0B24895113F120 || \
+        gpg --batch --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys \
+            F6E65AC044F831AC80A06380C8B3A55A6F3EFCDE \
+            FB0B24895113F120; \
+        gpg --batch --export \
+            F6E65AC044F831AC80A06380C8B3A55A6F3EFCDE \
+            FB0B24895113F120 \
+            > /etc/apt/keyrings/librealsense-archive-keyring.gpg; \
+        rm -rf "$GNUPGHOME"; \
+        echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/librealsense-archive-keyring.gpg] https://librealsense.intel.com/Debian/apt-repo $(lsb_release -cs) main" \
+            > /etc/apt/sources.list.d/librealsense.list; \
+        apt-get update; \
+        apt-get install -y librealsense2-utils librealsense2-dev; \
+        apt-get clean; \
+        rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+        apt-get update; \
+        rs_pkgs="$(apt-cache search '^ros-humble-realsense2-' | awk '{print $1}' | tr '\n' ' ')"; \
+        if [ -n "$rs_pkgs" ]; then \
+            apt-get install -y $rs_pkgs; \
+        else \
+            echo "No ros-humble-realsense2-* packages found for this architecture. Skipping ROS RealSense wrapper install."; \
+        fi; \
+        apt-get clean; \
+        rm -rf /var/lib/apt/lists/*
 
 
 WORKDIR /root/ros2_ws
