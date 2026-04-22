@@ -1,6 +1,6 @@
 /**:
   ros__parameters:
-    imu_topic: "/lidar_imu"
+    imu_topic: "/spot/imu_sensor_broadcaster/imu"
     laser_topic: "/lidar_points"
     sensor: "velodyne"
     use_imu_roll_pitch: false

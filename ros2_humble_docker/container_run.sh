@@ -19,7 +19,7 @@ fi
 # Assign the arguments to variables for clarity
 CONTAINER_NAME="$1"
 IMAGE_NAME="$2"
-PROJECT_DIR="/opt/ros_workspaces/ros2_ws/src"
+PROJECT_DIR="/home/zitongzhan/ros2_ws/src"
 DATASET_DIR="/opt/ros_workspaces/data"
 
 # Launch the nvidia-docker container with the provided image name and tag
@@ -35,4 +35,5 @@ docker run --privileged -it \
            --shm-size=4gb \
            --name="$CONTAINER_NAME" \
            --env="DISPLAY=$DISPLAY" \
+           --env="RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" \
            "$IMAGE_NAME" /bin/bash
