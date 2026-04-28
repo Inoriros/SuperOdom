@@ -7,7 +7,6 @@ Panels:
         - /Global Options1
         - /Status1
         - /PointCloud21
-        - /PointCloud21/Topic1
         - /Path1
         - /Path1/Topic1
         - /Odometry1
@@ -64,8 +63,8 @@ Visualization Manager:
     - Alpha: 0.009999999776482582
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 8.401062965393066
-        Min Value: -3.128063440322876
+        Max Value: 4.379366874694824
+        Min Value: -1.3708264827728271
         Value: true
       Axis: Z
       Channel Name: intensity
@@ -170,7 +169,7 @@ Visualization Manager:
         map:
           Value: true
         sensor:
-          Value: true
+          Value: false
       Marker Scale: 3
       Name: TF
       Show Arrows: true
@@ -472,7 +471,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 27.9553279876709
+      Distance: 18.190235137939453
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -487,10 +486,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.544796347618103
+      Pitch: 0.43479689955711365
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 1.300196647644043
+      Yaw: 0.5501964688301086
     Saved: ~
 Window Geometry:
   Displays:

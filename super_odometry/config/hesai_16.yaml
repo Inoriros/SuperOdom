@@ -43,8 +43,8 @@
     imu_preintegration_node:
         lidar_correction_noise: 0.01
 
-        acc_n: 3.9939570888238808e-03          # accelerometer measurement noise standard deviation. #0.2
-        gyr_n: 1.5636343949698187e-03         # gyroscope measurement noise standard deviation.     #0.05
-        acc_w: 6.4356659353532566e-05          # accelerometer bias random work noise standard deviation.  #0.02
-        gyr_w: 3.5640318696367613e-05       # gyroscope bias random work noise standard deviation.     #4.0e-5
-        g_norm: 9.80511    # 0 means you need to provide both imu-camera and laser-camera extrinsic
+        acc_n: 0.1          # accelerometer measurement noise standard deviation. #0.2
+        gyr_n: 0.01         # gyroscope measurement noise standard deviation.     #0.05
+        acc_w: 0.0002          # accelerometer bias random work noise standard deviation.  #0.02
+        gyr_w: 0.00002       # gyroscope bias random work noise standard deviation.     #4.0e-5
+        g_norm: 9.8    # 0 means you need to provide both imu-camera and laser-camera extrinsic
