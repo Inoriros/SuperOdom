@@ -1,7 +1,7 @@
 /**:
   ros__parameters:
     imu_topic: "/spot/imu_sensor_broadcaster/imu"
-    laser_topic: "/lidar_points"
+    laser_topic: "/lidar_points_corrected"
     sensor: "velodyne"
     use_imu_roll_pitch: false
     save_ply: false   # This can affect real-time performance; make sure you have enough memory for saving point cloud
@@ -20,7 +20,7 @@
         scan_line: 16
         min_range: 0.2    #<!-- remove too closed points -->
         filter_point_size: 3
-        provide_point_time: 0   # Set to 1 if your Hesai point cloud publishes per-point time
+        provide_point_time: 1   # Set to 1 if your Hesai point cloud publishes per-point time
 
     # Laser Mapping Params
     laser_mapping_node:

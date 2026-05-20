@@ -39,10 +39,14 @@ namespace super_odometry {
         RCLCPP_INFO(this->get_logger(), "[SuperOdometry::imuPreintegration] use_imu_rol_pitch:  %d", config_.use_imu_roll_pitch);
 
         //subscribe and publish relevant topics
-        subImu = this->create_subscription<sensor_msgs::msg::Imu>(
-            IMU_TOPIC, imu_qos,
-            std::bind(&imuPreintegration::imuHandler, this,
-                        std::placeholders::_1), sub_options);
+        if (!IMU_TOPIC.empty()) {
+            subImu = this->create_subscription<sensor_msgs::msg::Imu>(
+                IMU_TOPIC, imu_qos,
+                std::bind(&imuPreintegration::imuHandler, this,
+                            std::placeholders::_1), sub_options);
+        } else {
+            RCLCPP_INFO(this->get_logger(), "IMU_TOPIC is empty, skipping IMU preintegration subscription.");
+        }
         subLaserOdometry = this->create_subscription<nav_msgs::msg::Odometry>(
             ProjectName+"/laser_odometry", 5,
             std::bind(&imuPreintegration::laserodometryHandler, this,

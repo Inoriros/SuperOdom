@@ -1,14 +1,17 @@
 %YAML:1.0
 
 # Rotation from laser frame to imu frame, imu^R_laser
-# Since they are aligned, this is the Identity Matrix
+# LiDAR pitched downward by ~6 degrees around Y axis
 extrinsicRotation_imu_laser: !!opencv-matrix
   rows: 3
   cols: 3
   dt: d
-  data: [1., 0., 0.,
-         0., 1., 0.,
-         0., 0., 1.]
+  data: [0.994522, 0., 0.104528,
+         0.,       1., 0.,
+        -0.104528, 0., 0.994522]
+  # data: [-1., 0., 0.,
+  #       0., 1., 0.,
+  #       0., 0., -1.]
 
 # Translation from laser frame to imu frame, imu^T_laser
 # This is the position of the Lidar relative to the IMU

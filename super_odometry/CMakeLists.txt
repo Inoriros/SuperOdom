@@ -150,6 +150,13 @@ target_link_libraries(laser_mapping_node
     SuperOdomLib
 )
 
+# Hesai Point Cloud Converter node
+add_executable(hesai_point_cloud_converter src/hesai_point_cloud_converter.cpp)
+ament_target_dependencies(hesai_point_cloud_converter rclcpp sensor_msgs)
+target_link_libraries(hesai_point_cloud_converter
+    ${PCL_LIBRARIES}
+)
+
 # Install Exported Libraries
 ament_export_targets(export_super_odometry HAS_LIBRARY_TARGET)
 
@@ -175,6 +182,7 @@ install(TARGETS
   imu_preintegration_node
   feature_extraction_node
   laser_mapping_node
+  hesai_point_cloud_converter
   DESTINATION lib/${PROJECT_NAME}
 )
 

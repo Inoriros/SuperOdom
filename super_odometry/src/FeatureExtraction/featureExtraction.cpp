@@ -75,10 +75,14 @@ namespace super_odometry {
                     std::placeholders::_1), sub_options);
         } //TODO: add this to config
 
-        subImu = this->create_subscription<sensor_msgs::msg::Imu>(
-            IMU_TOPIC, imu_qos, 
-            std::bind(&featureExtraction::imu_Handler, this,
-                        std::placeholders::_1), sub_options);
+        if (!IMU_TOPIC.empty()) {
+            subImu = this->create_subscription<sensor_msgs::msg::Imu>(
+                IMU_TOPIC, imu_qos,
+                std::bind(&featureExtraction::imu_Handler, this,
+                            std::placeholders::_1), sub_options);
+        } else {
+            RCLCPP_INFO(this->get_logger(), "IMU_TOPIC is empty, running feature extraction in LiDAR-only mode.");
+        }
 
         subOdom = this->create_subscription<nav_msgs::msg::Odometry>(
             ODOM_TOPIC, 10, 

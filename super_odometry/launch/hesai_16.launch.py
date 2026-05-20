@@ -90,6 +90,16 @@ def generate_launch_description():
         }],
     )
 
+    # Hesai Point Cloud Converter node
+    hesai_converter_node = Node(
+        package="super_odometry",
+        executable="hesai_point_cloud_converter",
+        output={
+            "stdout": "screen",
+            "stderr": "screen",
+        },
+    )
+
 
     return LaunchDescription([
         launch_ros.actions.SetParameter(name='use_sim_time', value='false'),
@@ -100,6 +110,7 @@ def generate_launch_description():
         world_frame_rot_arg,
         sensor_frame_arg,
         sensor_frame_rot_arg,
+        hesai_converter_node,
         feature_extraction_node,
         laser_mapping_node,
         imu_preintegration_node,
