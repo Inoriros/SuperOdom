@@ -87,7 +87,7 @@ private:
         // Convert points
         output_msg->data.resize(output_msg->row_step * msg->height);
 
-        double first_timestamp_us = 0.0;
+        double first_timestamp = 0.0;
         bool first_timestamp_initialized = false;
         
         for (uint32_t i = 0; i < msg->width; ++i) {
@@ -103,14 +103,13 @@ private:
             std::memcpy(&point.intensity, &msg->data[input_offset + intensity_offset], sizeof(float));
             std::memcpy(&point.ring, &msg->data[input_offset + ring_offset], sizeof(uint16_t));
             
-            // Convert timestamp from double (microseconds) to a relative time offset in seconds.
-            double timestamp_us;
-            std::memcpy(&timestamp_us, &msg->data[input_offset + timestamp_offset], sizeof(double));
+            double timestamp;
+            std::memcpy(&timestamp, &msg->data[input_offset + timestamp_offset], sizeof(double));
             if (!first_timestamp_initialized) {
-                first_timestamp_us = timestamp_us;
+                first_timestamp = timestamp;
                 first_timestamp_initialized = true;
             }
-            point.time = static_cast<float>((timestamp_us - first_timestamp_us) / 1e6);
+            point.time = static_cast<float>(timestamp - first_timestamp);
 
             // Write point to output
             std::memcpy(&output_msg->data[output_offset], &point, sizeof(VelodynePoint));
