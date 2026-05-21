@@ -321,7 +321,8 @@ bool readGlobalparam(rclcpp::Node::SharedPtr node)
     const std::unordered_map<std::string, SensorType> sensorTypeMap = {
         {"velodyne", SensorType::VELODYNE},
         {"ouster", SensorType::OUSTER},
-        {"livox", SensorType::LIVOX}
+        {"livox", SensorType::LIVOX},
+        {"hesai", SensorType::HESAI}
     };
 
     if (sensorTypeMap.find(SENSOR) == sensorTypeMap.end()) {

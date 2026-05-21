@@ -3,6 +3,7 @@
 //
 
 #include <super_odometry/FeatureExtraction/featureExtraction.h>
+#include <cstring>
 #define RESET "\033[0m"
 #define BLACK "\033[30m"   /* Black */
 #define RED "\033[31m"     /* Red */
@@ -65,7 +66,8 @@ namespace super_odometry {
             rclcpp::shutdown();
         }
 
-        if (config_.sensor == SensorType::VELODYNE || config_.sensor == SensorType::OUSTER) {
+        if (config_.sensor == SensorType::VELODYNE || config_.sensor == SensorType::OUSTER ||
+            config_.sensor == SensorType::HESAI) {
             subLaserCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(LASER_TOPIC, laser_qos, 
                     std::bind(&featureExtraction::laserCloudHandler, this,
                     std::placeholders::_1), sub_options);
@@ -167,6 +169,8 @@ namespace super_odometry {
             config_.sensor = SensorType::VELODYNE;
         } else if (SENSOR == "ouster") {
             config_.sensor = SensorType::OUSTER;
+        } else if (SENSOR == "hesai") {
+            config_.sensor = SensorType::HESAI;
         } 
         return true;
     }
@@ -711,6 +715,75 @@ namespace super_odometry {
         }
     }
 
+    bool featureExtraction::convertHesaiPointCloud(
+        const sensor_msgs::msg::PointCloud2::SharedPtr &laserCloudMsg,
+        pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &pointCloud)
+    {
+        const sensor_msgs::msg::PointField *x_field = nullptr;
+        const sensor_msgs::msg::PointField *y_field = nullptr;
+        const sensor_msgs::msg::PointField *z_field = nullptr;
+        const sensor_msgs::msg::PointField *intensity_field = nullptr;
+        const sensor_msgs::msg::PointField *ring_field = nullptr;
+        const sensor_msgs::msg::PointField *timestamp_field = nullptr;
+
+        for (const auto &field : laserCloudMsg->fields) {
+            if (field.name == "x") x_field = &field;
+            else if (field.name == "y") y_field = &field;
+            else if (field.name == "z") z_field = &field;
+            else if (field.name == "intensity") intensity_field = &field;
+            else if (field.name == "ring") ring_field = &field;
+            else if (field.name == "timestamp") timestamp_field = &field;
+        }
+
+        if (!x_field || !y_field || !z_field || !intensity_field || !ring_field || !timestamp_field) {
+            RCLCPP_ERROR(this->get_logger(),
+                "Hesai cloud must contain x, y, z, intensity, ring, and timestamp fields.");
+            return false;
+        }
+
+        if (x_field->datatype != sensor_msgs::msg::PointField::FLOAT32 ||
+            y_field->datatype != sensor_msgs::msg::PointField::FLOAT32 ||
+            z_field->datatype != sensor_msgs::msg::PointField::FLOAT32 ||
+            intensity_field->datatype != sensor_msgs::msg::PointField::FLOAT32 ||
+            ring_field->datatype != sensor_msgs::msg::PointField::UINT16 ||
+            timestamp_field->datatype != sensor_msgs::msg::PointField::FLOAT64) {
+            RCLCPP_ERROR(this->get_logger(),
+                "Unexpected Hesai cloud field types. Expected float32 xyz/intensity, uint16 ring, float64 timestamp.");
+            return false;
+        }
+
+        const size_t cloud_size = static_cast<size_t>(laserCloudMsg->width) * laserCloudMsg->height;
+        pointCloud->clear();
+        pointCloud->reserve(cloud_size);
+        pointCloud->is_dense = laserCloudMsg->is_dense;
+
+        double first_timestamp = 0.0;
+        bool first_timestamp_initialized = false;
+
+        for (size_t i = 0; i < cloud_size; ++i) {
+            const size_t input_offset = i * laserCloudMsg->point_step;
+            point_os::PointcloudXYZITR point;
+
+            std::memcpy(&point.x, &laserCloudMsg->data[input_offset + x_field->offset], sizeof(float));
+            std::memcpy(&point.y, &laserCloudMsg->data[input_offset + y_field->offset], sizeof(float));
+            std::memcpy(&point.z, &laserCloudMsg->data[input_offset + z_field->offset], sizeof(float));
+            std::memcpy(&point.intensity, &laserCloudMsg->data[input_offset + intensity_field->offset], sizeof(float));
+            std::memcpy(&point.ring, &laserCloudMsg->data[input_offset + ring_field->offset], sizeof(uint16_t));
+
+            double timestamp = 0.0;
+            std::memcpy(&timestamp, &laserCloudMsg->data[input_offset + timestamp_field->offset], sizeof(double));
+            if (!first_timestamp_initialized) {
+                first_timestamp = timestamp;
+                first_timestamp_initialized = true;
+            }
+            point.time = static_cast<float>(timestamp - first_timestamp);
+
+            pointCloud->push_back(point);
+        }
+
+        return true;
+    }
+
     void featureExtraction::laserCloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg)
     {  
         // Check if we should process this frame based on skip count
@@ -732,6 +805,13 @@ namespace super_odometry {
             {
                 pcl::fromROSMsg(*laserCloudMsg, *pointCloud);
 
+            }
+            else if (config_.sensor == SensorType::HESAI)
+            {
+                if (!convertHesaiPointCloud(laserCloudMsg, pointCloud)) {
+                    m_buf.unlock();
+                    return;
+                }
             }
             else if (config_.sensor == SensorType::OUSTER)
             {

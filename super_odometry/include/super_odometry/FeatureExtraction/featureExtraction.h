@@ -119,6 +119,9 @@ namespace super_odometry {
 
         void livoxHandler(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg);
 
+        bool convertHesaiPointCloud(const sensor_msgs::msg::PointCloud2::SharedPtr &laserCloudMsg,
+                                    pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &pointCloud);
+
         void uniformFeatureExtraction(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &pc_in, 
             pcl::PointCloud<pcl::PointXYZI>::Ptr &pc_out_surf, int skip_num, float block_range);
 

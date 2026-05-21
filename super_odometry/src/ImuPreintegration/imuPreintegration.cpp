@@ -137,6 +137,8 @@ namespace super_odometry {
             config_.sensor = SensorType::VELODYNE;
         } else if (SENSOR == "ouster") {
             config_.sensor = SensorType::OUSTER;
+        } else if (SENSOR == "hesai") {
+            config_.sensor = SensorType::HESAI;
         }   
 
         return true;

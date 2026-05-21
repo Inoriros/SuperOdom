@@ -38,7 +38,7 @@
 #include <thread>
 #include <vector>
 
-enum class SensorType {VELODYNE, OUSTER, LIVOX};
+enum class SensorType {VELODYNE, OUSTER, LIVOX, HESAI};
 extern std::string IMU_TOPIC;
 extern std::string LASER_TOPIC;
 extern std::string ODOM_TOPIC;
@@ -127,4 +127,3 @@ extern Eigen::Vector3d ouster_sensor_T;
 bool readGlobalparam(rclcpp::Node::SharedPtr);
 
 bool readCalibration(rclcpp::Node::SharedPtr);
-

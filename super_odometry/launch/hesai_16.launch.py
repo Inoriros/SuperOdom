@@ -16,7 +16,7 @@ def generate_launch_description():
         file_name="config/hesai_16.yaml")
     calib_path = get_share_file(
         package_name="super_odometry",
-        file_name="config/velodyne/hesai_16_calibration.yaml"
+        file_name="config/hesai/xt_16_calibration.yaml"
     )
     home_directory = os.path.expanduser("~")
 
@@ -90,17 +90,6 @@ def generate_launch_description():
         }],
     )
 
-    # Hesai Point Cloud Converter node
-    hesai_converter_node = Node(
-        package="super_odometry",
-        executable="hesai_point_cloud_converter",
-        output={
-            "stdout": "screen",
-            "stderr": "screen",
-        },
-    )
-
-
     return LaunchDescription([
         launch_ros.actions.SetParameter(name='use_sim_time', value='false'),
         config_path_arg,
@@ -110,7 +99,6 @@ def generate_launch_description():
         world_frame_rot_arg,
         sensor_frame_arg,
         sensor_frame_rot_arg,
-        hesai_converter_node,
         feature_extraction_node,
         laser_mapping_node,
         imu_preintegration_node,
