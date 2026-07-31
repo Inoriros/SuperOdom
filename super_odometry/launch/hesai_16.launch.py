@@ -43,20 +43,19 @@ def generate_launch_description():
     )
     sensor_frame_arg = DeclareLaunchArgument(
         "sensor_frame",
-        default_value="sensor",
+        default_value="imu",
     )
     sensor_frame_rot_arg = DeclareLaunchArgument(
         "sensor_frame_rot",
-        default_value="sensor_rot",
+        default_value="imu_rot",
     )
 
     feature_extraction_node = Node(
         package="super_odometry",
         executable="feature_extraction_node",
-        output={
-            "stdout": "screen",
-            "stderr": "screen",
-        },
+        # Mirror output to the terminal, launch.log, and per-process log files.
+        output="full",
+        emulate_tty=True,
         parameters=[LaunchConfiguration("config_file"),
             { "calibration_file": LaunchConfiguration("calibration_file"),
         }],
@@ -65,10 +64,8 @@ def generate_launch_description():
     laser_mapping_node = Node(
         package="super_odometry",
         executable="laser_mapping_node",
-        output={
-            "stdout": "screen",
-            "stderr": "screen",
-        },
+        output="full",
+        emulate_tty=True,
         parameters=[LaunchConfiguration("config_file"),
             { "calibration_file": LaunchConfiguration("calibration_file"),
              "map_dir": os.path.join(home_directory, "/path/to/your/pcd"),
@@ -81,10 +78,8 @@ def generate_launch_description():
     imu_preintegration_node = Node(
         package="super_odometry",
         executable="imu_preintegration_node",
-        output={
-            "stdout": "screen",
-            "stderr": "screen",
-        },
+        output="full",
+        emulate_tty=True,
         parameters=[LaunchConfiguration("config_file"),
             { "calibration_file": LaunchConfiguration("calibration_file")
         }],

@@ -53,7 +53,7 @@ namespace super_odometry {
                         std::placeholders::_1), sub_options);
 
         pubImuOdometry = this->create_publisher<nav_msgs::msg::Odometry>(
-            ProjectName+"/state_estimation", 10);
+            ProjectName+"/state_estimation0", 10);
         pubHealthStatus = this->create_publisher<std_msgs::msg::Bool>(
             ProjectName+"/state_estimation_health", 1);
         pubImuPath = this->create_publisher<nav_msgs::msg::Path>(

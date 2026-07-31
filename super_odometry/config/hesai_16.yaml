@@ -8,8 +8,8 @@
 
     world_frame: "map"
     world_frame_rot: "map_rot"
-    sensor_frame: "sensor"
-    sensor_frame_rot: "sensor_rot"
+    sensor_frame: "imu"
+    sensor_frame_rot: "imu_rot"
 
     imu_acc_x_limit: 0.5
     imu_acc_y_limit: 0.2
@@ -18,8 +18,8 @@
     # Feature Extraction Params
     feature_extraction_node:
         scan_line: 16
-        min_range: 0.6    #<!-- remove too closed points -->
-        filter_point_size: 2
+        min_range: 0.8    #<!-- remove too closed points -->
+        filter_point_size: 3
         provide_point_time: 1   # Set to 1 if your Hesai point cloud publishes per-point time
 
     # Laser Mapping Params

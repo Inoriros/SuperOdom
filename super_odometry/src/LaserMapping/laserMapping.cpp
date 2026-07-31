@@ -67,7 +67,7 @@ namespace super_odometry {
             ProjectName+"/overall_map", 2);
 
         pubLaserCloudFullRes = this->create_publisher<sensor_msgs::msg::PointCloud2>(
-            ProjectName+"/registered_scan", 2);
+            ProjectName+"/registered_scan0", 2);
 
 
         pubOdomAftMapped = this->create_publisher<nav_msgs::msg::Odometry>(
