@@ -9,6 +9,9 @@
 
 
 #include <cmath>
+#include <atomic>
+#include <algorithm>
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <sophus/so3.hpp>
@@ -42,8 +45,6 @@ namespace super_odometry {
     using std::atan2;
     using std::cos;
     using std::sin;
-    std::vector<std::queue<sensor_msgs::msg::PointCloud2::SharedPtr>> all_cloud_buf(2);
-     
     constexpr unsigned int BLOCK_TIME_NS = 55296;   // Time in ns for one block (measurement + recharge)
     constexpr std::size_t NUM_BLOCKS = 12;    // Number of blocks in a Velodyne packet
     constexpr double LIDAR_MESSAGE_TIME = (double)(NUM_BLOCKS * BLOCK_TIME_NS * 151) * 1e-9;
@@ -80,6 +81,7 @@ namespace super_odometry {
         Eigen::Vector3d accel;
         Eigen::Vector3d gyr;
         Eigen::Quaterniond orientation;
+        bool orientation_valid = false;
     };
 
     typedef feature_extraction_config feature_extraction_config;
@@ -97,17 +99,13 @@ namespace super_odometry {
 
         void initInterface();
   
-        template <typename Meas>
-        bool synchronize_measurements(MapRingBuffer<Meas> &measureBuf,
-                                        MapRingBuffer<pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr> &lidarBuf);
-
         void imuRemovePointDistortion(double lidar_start_time, double lidar_end_time, MapRingBuffer<Imu::Ptr> &imuBuf,
                                     pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &lidar_msg);
 
         void vioRemovePointDistortion(double lidar_start_time, double lidar_end_time, MapRingBuffer<nav_msgs::msg::Odometry::SharedPtr>&vioBuf,
                                     pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &lidar_msg);
 
-        void undistortionAndFeatureExtraction();
+        bool processPendingLidar();
 
         void extractFeatures(double lidar_start_time, const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr& lidar_msg, const Eigen::Quaterniond& quaternion);
 
@@ -147,7 +145,7 @@ namespace super_odometry {
 
         Imu::Ptr createImuData(const ImuMeasurement& measurement);
 
-        void updateImuOrientation(Imu::Ptr& imudata);
+        void updateImuOrientation(Imu::Ptr& imudata, const ImuMeasurement& measurement);
 
         void imuInitialization(double timestamp);
 
@@ -198,7 +196,8 @@ namespace super_odometry {
 
         int delay_count_;
         std::mutex m_buf;
-        int frameCount = 0;
+        std::mutex processing_mutex_;
+        std::atomic<int> frameCount{0};
 
         bool PUB_EACH_LINE = false;
         bool LASER_IMU_SYNC_SCCUESS = false;
@@ -210,6 +209,10 @@ namespace super_odometry {
         std_msgs::msg::Header FeatureHeader;
         Eigen::Quaterniond q_w_original_l;
         Eigen::Vector3d t_w_original_l;
+        Eigen::Quaterniond imu_orientation_reference_{Eigen::Quaterniond::Identity()};
+        bool imu_orientation_reference_initialized_ = false;
+        std::uint64_t processed_lidar_frames_ = 0;
+        std::uint64_t stale_lidar_frames_ = 0;
         pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr pointCloudwithTime=nullptr;
         pcl::PointCloud<point_os::OusterPointXYZIRT>::Ptr tmpOusterCloudIn=nullptr ;
         feature_extraction_config config_;

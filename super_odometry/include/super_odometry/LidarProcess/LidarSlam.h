@@ -26,6 +26,7 @@
 #include <filesystem>
 
 #include "super_odometry/LidarProcess/factor/SE3AbsolutatePoseFactor.h"
+#include "super_odometry/LidarProcess/factor/GravityAlignmentFactor.h"
 #include "super_odometry/LidarProcess/factor/lidarOptimization.h"
 #include "super_odometry/LidarProcess/factor/pose_local_parameterization.h"
 #include <ceres/ceres.h>
@@ -119,9 +120,11 @@ namespace super_odometry {
             tf2::Quaternion imu_roll_pitch;
             bool  debug_view_enabled;
             bool  use_imu_roll_pitch;
+            double imu_roll_pitch_weight;
             float velocity_failure_threshold;
             float yaw_ratio;
             int max_surface_features;
+            int map_update_interval;
         };
 
         //! Estimation of registration error

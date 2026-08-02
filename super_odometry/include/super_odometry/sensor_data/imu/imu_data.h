@@ -37,8 +37,12 @@ public:
     gyr_cov<<0.1,0.1,0.1;
     gravity<<0.0,0.0,0.0;
     gyr_bias<<0.0,0.0,0.0;
-    gyr_bias<<0.0,0.0,0.0;
+    acc_bias<<0.0,0.0,0.0;
     q_w_i.setIdentity();
+    Roll_Pitch_Gravity_Matrix.setIdentity();
+    imu_laser_R_Gravity.setIdentity();
+    pitch_offset_gravity = 0.0;
+    roll_offset_gravity = 0.0;
   }
 
   // Function to calculate pitch and roll and construct the combined rotation matrix
@@ -70,64 +74,43 @@ public:
 
   void imuInit(MapRingBuffer<Imu::Ptr> imuBuf) {
     
-    int Num = 0;
     if (first_imu==false){
         return;
     }
-    
-    // Initialize if the buffer is not empty
-    if (!imuBuf.empty()) {
-        first_imu = false;
-        const double &time_first = imuBuf.measMap_.begin()->second->time;
-        const Eigen::Quaterniond rot_first = imuBuf.measMap_.begin()->second->q_w_i;
-        const Eigen::Vector3d gyr_first = imuBuf.measMap_.begin()->second->gyr;
-        const Eigen::Vector3d acc_first = imuBuf.measMap_.begin()->second->acc;
-        acc_mean = acc_first;
-        gyr_mean = gyr_first;
-        time = time_first;
-      
-        Num = 1;
+    if (imuBuf.empty()) {
+        return;
     }
-  
-    // Variables for frequency calculation
-    double time_prev = 0;
-    double total_time_diff = 0;
-    int time_diff_count = 0;
-    
-    // Iterate through the IMU buffer and update mean and covariance
-    for (std::map<double, Imu::Ptr>::iterator itMeas_ = imuBuf.measMap_.begin(); itMeas_ != imuBuf.measMap_.end(); ++itMeas_) {
 
-        const double &time_cur = itMeas_->second->time;
-        const Eigen::Quaterniond rot_cur = itMeas_->second->q_w_i;
-        const Eigen::Vector3d gyr_cur = itMeas_->second->gyr;
-        const Eigen::Vector3d acc_cur = itMeas_->second->acc;
-        
-        // Calculate time difference for frequency estimation
-        if (Num > 1) {
-            double time_diff = time_cur - time_prev;
-            if (time_diff > 0) {  // Ensure valid time difference
-                total_time_diff += time_diff;
-                time_diff_count++;
-            }
+    const std::size_t count = imuBuf.measMap_.size();
+    acc_mean.setZero();
+    gyr_mean.setZero();
+    for (const auto &entry : imuBuf.measMap_) {
+        acc_mean += entry.second->acc;
+        gyr_mean += entry.second->gyr;
+    }
+    acc_mean /= static_cast<double>(count);
+    gyr_mean /= static_cast<double>(count);
+
+    acc_cov.setZero();
+    gyr_cov.setZero();
+    if (count > 1) {
+        for (const auto &entry : imuBuf.measMap_) {
+            const Eigen::Vector3d acc_error = entry.second->acc - acc_mean;
+            const Eigen::Vector3d gyr_error = entry.second->gyr - gyr_mean;
+            acc_cov += acc_error.cwiseProduct(acc_error);
+            gyr_cov += gyr_error.cwiseProduct(gyr_error);
         }
-        time_prev = time_cur;
-      
-        // Update means
-        acc_mean += (acc_cur - acc_mean) / Num;
-        gyr_mean += (gyr_cur - gyr_mean) / Num;
+        acc_cov /= static_cast<double>(count - 1);
+        gyr_cov /= static_cast<double>(count - 1);
 
-        // Update covariances
-        acc_cov = acc_cov * (Num - 1.0) / Num + (acc_cur - acc_mean).cwiseProduct(acc_cur - acc_mean) / (Num - 1.0);
-        gyr_cov = gyr_cov * (Num - 1.0) / Num + (gyr_cur - gyr_mean).cwiseProduct(gyr_cur - gyr_mean) / (Num - 1.0);
-        Num++;
+        const double duration =
+            imuBuf.measMap_.rbegin()->first - imuBuf.measMap_.begin()->first;
+        if (duration > 0.0) {
+            imu_frequency = static_cast<double>(count - 1) / duration;
+        }
     }
-  
-    // if (Num > 1 && time_diff_count > 0) {
-    //     // Get total time span
-    //     double total_time_span = imuBuf.measMap_.rbegin()->second->time - imuBuf.measMap_.begin()->second->time;
-    //     // Calculate actual number of intervals (Num-1)
-    //     imu_frequency = Num / total_time_span;
-    // }
+
+    time = imuBuf.measMap_.begin()->first;
     
     //TODO: double check the gravity direction
     gravity= - acc_mean / acc_mean.norm() *Gravity_Norm;

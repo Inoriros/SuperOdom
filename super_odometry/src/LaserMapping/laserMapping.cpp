@@ -52,7 +52,7 @@ namespace super_odometry {
 
 
         subLaserFeatureInfo = this->create_subscription<super_odometry_msgs::msg::LaserFeature>(
-            ProjectName+"/feature_info", 2,
+            ProjectName+"/feature_info", 10,
             std::bind(&laserMapping::laserFeatureInfoHandler, this,
                         std::placeholders::_1), sub_options);
                         
@@ -96,7 +96,7 @@ namespace super_odometry {
             ProjectName+"/prediction_source", 1);
 
         process_timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(static_cast<int>(100.)),
+            std::chrono::milliseconds(static_cast<int>(5.)),
             std::bind(&laserMapping::process, this));
 
         slam.initROSInterface(shared_from_this());
@@ -109,6 +109,8 @@ namespace super_odometry {
         slam.OptSet.debug_view_enabled=config_.debug_view_enabled;
         slam.OptSet.velocity_failure_threshold=config_.velocity_failure_threshold;
         slam.OptSet.max_surface_features=config_.max_surface_features;
+        slam.OptSet.imu_roll_pitch_weight=config_.imu_roll_pitch_weight;
+        slam.OptSet.map_update_interval=config_.map_update_interval;
         slam.OptSet.yaw_ratio=yaw_ratio;
         slam.map_dir=config_.map_dir;
         slam.localization_mode=config_.localization_mode;
@@ -186,7 +188,11 @@ namespace super_odometry {
         this->declare_parameter("laser_mapping_node.enable_ouster_data", false);
         this->declare_parameter("laser_mapping_node.publish_only_feature_points", false);
         this->declare_parameter("laser_mapping_node.use_imu_roll_pitch", false);
+        this->declare_parameter("laser_mapping_node.imu_roll_pitch_weight", 100.0);
         this->declare_parameter("laser_mapping_node.max_surface_features", 2000);
+        this->declare_parameter("laser_mapping_node.map_update_interval", 5);
+        this->declare_parameter("laser_mapping_node.path_publish_stride", 10);
+        this->declare_parameter("laser_mapping_node.max_feature_queue_size", 20);
         this->declare_parameter("laser_mapping_node.velocity_failure_threshold", 30.0);
         this->declare_parameter("laser_mapping_node.auto_voxel_size", true);
         this->declare_parameter("laser_mapping_node.forget_far_chunks", false);
@@ -209,8 +215,12 @@ namespace super_odometry {
         config_.debug_view_enabled = this->get_parameter("laser_mapping_node.debug_view").as_bool();
         config_.enable_ouster_data = this->get_parameter("laser_mapping_node.enable_ouster_data").as_bool();
         config_.publish_only_feature_points = this->get_parameter("laser_mapping_node.publish_only_feature_points").as_bool();
-        // config_.use_imu_roll_pitch = this->get_parameter("laser_mapping_node.use_imu_roll_pitch").as_bool();
+        config_.use_imu_roll_pitch = this->get_parameter("laser_mapping_node.use_imu_roll_pitch").as_bool();
+        config_.imu_roll_pitch_weight = this->get_parameter("laser_mapping_node.imu_roll_pitch_weight").as_double();
         config_.max_surface_features = this->get_parameter("laser_mapping_node.max_surface_features").as_int();
+        config_.map_update_interval = this->get_parameter("laser_mapping_node.map_update_interval").as_int();
+        config_.path_publish_stride = this->get_parameter("laser_mapping_node.path_publish_stride").as_int();
+        config_.max_feature_queue_size = this->get_parameter("laser_mapping_node.max_feature_queue_size").as_int();
         config_.velocity_failure_threshold = this->get_parameter("laser_mapping_node.velocity_failure_threshold").as_double();
         config_.auto_voxel_size = this->get_parameter("laser_mapping_node.auto_voxel_size").as_bool();
         config_.forget_far_chunks = this->get_parameter("laser_mapping_node.forget_far_chunks").as_bool();
@@ -218,7 +228,6 @@ namespace super_odometry {
         config_.map_dir = this->get_parameter("map_dir").as_string(); 
         config_.localization_mode = this->get_parameter("laser_mapping_node.localization_mode").as_bool();
         config_.read_pose_file = this->get_parameter("laser_mapping_node.read_pose_file").as_bool();
-        config_.use_imu_roll_pitch = USE_IMU_ROLL_PITCH;
 
         if(config_.read_pose_file)
         {   
@@ -247,17 +256,23 @@ namespace super_odometry {
    
 
     void laserMapping::laserFeatureInfoHandler(const super_odometry_msgs::msg::LaserFeature::SharedPtr msgIn) {
-       
-        mBuf.lock();
-        cornerLastBuf.push(msgIn->cloud_corner);
-        surfLastBuf.push(msgIn->cloud_surface);
-        realsenseBuf.push(msgIn->cloud_realsense);
-        fullResBuf.push(msgIn->cloud_nodistortion);
-        Eigen::Quaterniond imuprediction_tmp(msgIn->initial_quaternion_w, msgIn->initial_quaternion_x,
-                                             msgIn->initial_quaternion_y, msgIn->initial_quaternion_z);
+        std::lock_guard<std::mutex> lock(mBuf);
+        featureBuf.push_back(msgIn);
+        ++received_feature_frames_;
 
-        IMUPredictionBuf.push(imuprediction_tmp);
-        mBuf.unlock();
+        const std::size_t max_queue =
+            static_cast<std::size_t>(std::max(1, config_.max_feature_queue_size));
+        if (featureBuf.size() > max_queue) {
+            featureBuf.pop_front();
+            ++dropped_feature_frames_;
+            RCLCPP_WARN_THROTTLE(
+                this->get_logger(), *this->get_clock(), 5000,
+                "Mapping queue overflow: dropped %lu complete frames "
+                "(received %lu, processed %lu)",
+                static_cast<unsigned long>(dropped_feature_frames_.load()),
+                static_cast<unsigned long>(received_feature_frames_.load()),
+                static_cast<unsigned long>(processed_feature_frames_.load()));
+        }
     }
 
 
@@ -286,9 +301,9 @@ void laserMapping::initializeFirstFrame(){
         tf2::Quaternion initial_orientation=utils::extractRollPitch(sensorMeas.imuPrediction);
         q_w_curr=Eigen::Quaterniond(initial_orientation.w(), initial_orientation.x(),
               initial_orientation.y(), initial_orientation.z());
-        auto q_extrinsic=Eigen::Quaterniond(imu_laser_R);
-        q_extrinsic.normalize();
-        q_w_curr=q_extrinsic.inverse()*q_w_curr;
+        imu_world_alignment = q_w_curr * sensorMeas.imuPrediction.inverse();
+        imu_world_alignment.normalize();
+        imu_world_alignment_initialized = true;
         
         
     }else{
@@ -316,17 +331,20 @@ void laserMapping::initializeFirstFrame(){
 
 void laserMapping::initializeWithIMU(){
     if(sensorMeas.imuPrediction.w()!=0){  //Have IMU data
-    //Use IMU Orientation directly during startup for seconds 
-    tf2::Quaternion curr_imu(sensorMeas.imuPrediction.w(), sensorMeas.imuPrediction.x(),
-                             sensorMeas.imuPrediction.y(), sensorMeas.imuPrediction.z());
+    // Use the IMU orientation in the mapping frame established at startup.
+    const Eigen::Quaterniond curr_imu = alignedImuPrediction(sensorMeas.imuPrediction);
     
     //Keep position from last frame 
     t_w_curr=last_T_w_lidar.pos;
     T_w_lidar.pos=t_w_curr;
 
     //Update rotation 
-    q_w_curr=Eigen::Quaterniond(curr_imu.w(), curr_imu.x(), curr_imu.y(), curr_imu.z());
+    q_w_curr=curr_imu;
     T_w_lidar.rot=q_w_curr;
+    // Recovery/startup forces the absolute IMU attitude. Keep the incremental
+    // predictor synchronized so the first normal frame does not reapply the
+    // entire IMU rotation accumulated during the recovery window.
+    q_wodom_pre=curr_imu;
 
 
     }else
@@ -379,6 +397,16 @@ switch(prediction_source){
 q_w_curr=T_w_lidar.rot;
 t_w_curr=T_w_lidar.pos;
 
+}
+
+Eigen::Quaterniond laserMapping::alignedImuPrediction(
+    const Eigen::Quaterniond& imuPrediction) const {
+    Eigen::Quaterniond aligned = imuPrediction;
+    if (imu_world_alignment_initialized) {
+        aligned = imu_world_alignment * imuPrediction;
+    }
+    aligned.normalize();
+    return aligned;
 }
 
 laserMapping::PredictionSource laserMapping::determinePredictionSource(){
@@ -445,7 +473,9 @@ return PredictionSource::CONSTANT_VELOCITY;
             pubLaserCloudSurround->publish(laserCloudSurround3);
         }
 
-        if (frameCount % 20 == 0) {
+        if (frameCount % 20 == 0 &&
+            (pubLaserCloudMap->get_subscription_count() > 0 ||
+             pubLaserCloudPrior->get_subscription_count() > 0)) {
             pcl::PointCloud<PointType> laserCloudMap;
             laserCloudMap = slam.localMap.getAllLocalMap();
             sensor_msgs::msg::PointCloud2 laserCloudMsg;
@@ -460,46 +490,23 @@ return PredictionSource::CONSTANT_VELOCITY;
             }
         }
 
-        int laserCloudFullResNum = laserCloudFullRes->points.size();
-        for (int i = 0; i < laserCloudFullResNum; i++) {
-            PointType const *const &pi = &laserCloudFullRes->points[i];
-            if (pi->x* pi->x+ pi->y * pi->y + pi->z* pi->z < 0.01)
-            {
-                continue;
+        if (pubLaserCloudFullRes->get_subscription_count() > 0) {
+            pcl::PointCloud<PointType> registered_scan;
+            registered_scan.reserve(laserCloudFullRes->size());
+            for (const auto &point : laserCloudFullRes->points) {
+                if (point.x * point.x + point.y * point.y + point.z * point.z <= 0.01) {
+                    continue;
+                }
+                PointType transformed;
+                utils::pointAssociateToMap(
+                    &point, &transformed, q_w_curr, t_w_curr);
+                registered_scan.push_back(transformed);
             }
-
-            utils::pointAssociateToMap(&laserCloudFullRes->points[i],
-                                &laserCloudFullRes->points[i],
-                                q_w_curr,
-                                t_w_curr);
-        }
-
-        pcl::PointCloud<pcl::PointXYZI> laserCloudFullResCvt, laserCloudFullResClean;
-        sensor_msgs::msg::PointCloud2 laserCloudFullRes3;
-        pcl::toROSMsg(*laserCloudFullRes, laserCloudFullRes3);
-        pcl::fromROSMsg(laserCloudFullRes3, laserCloudFullResCvt);
-        for (int i = 0; i < laserCloudFullResNum; i++) {
-          PointType const *const &pi = &laserCloudFullResCvt.points[i];
-          if (pi->x* pi->x+ pi->y * pi->y + pi->z* pi->z > 0.01)
-          {
-             laserCloudFullResClean.push_back(*pi);
-          }
-        }
-        pcl::toROSMsg(laserCloudFullResClean, laserCloudFullRes3);
-        laserCloudFullRes3.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
-        laserCloudFullRes3.header.frame_id = WORLD_FRAME;
-        pubLaserCloudFullRes->publish(laserCloudFullRes3);
-
-        laserCloudFullResCvt.clear();
-        laserCloudFullResClean.clear();
-        laserCloudFullRes_rot->clear();
-        laserCloudFullRes_rot->resize(laserCloudFullResNum);
-
-        for (int i = 0; i < laserCloudFullResNum; i++) {
-            laserCloudFullRes_rot->points[i].x = laserCloudFullRes->points[i].y;
-            laserCloudFullRes_rot->points[i].y = laserCloudFullRes->points[i].z;
-            laserCloudFullRes_rot->points[i].z = laserCloudFullRes->points[i].x;
-            laserCloudFullRes_rot->points[i].intensity = laserCloudFullRes->points[i].intensity;
+            sensor_msgs::msg::PointCloud2 registered_msg;
+            pcl::toROSMsg(registered_scan, registered_msg);
+            registered_msg.header.stamp = rclcpp::Time(timeLaserOdometry * 1e9);
+            registered_msg.header.frame_id = WORLD_FRAME;
+            pubLaserCloudFullRes->publish(registered_msg);
         }
 
         nav_msgs::msg::Odometry odomAftMapped;
@@ -575,7 +582,10 @@ return PredictionSource::CONSTANT_VELOCITY;
         laserAfterMappedPath.header.stamp = odomAftMapped.header.stamp;
         laserAfterMappedPath.header.frame_id = WORLD_FRAME;
         laserAfterMappedPath.poses.push_back(laserAfterMappedPose);
-        pubLaserAfterMappedPath->publish(laserAfterMappedPath);
+        const int path_stride = std::max(1, config_.path_publish_stride);
+        if (frameCount == 1 || frameCount % path_stride == 0) {
+            pubLaserAfterMappedPath->publish(laserAfterMappedPath);
+        }
 
 
         slam.stats.header = odomAftMapped.header;
@@ -603,6 +613,14 @@ return PredictionSource::CONSTANT_VELOCITY;
         bool increase_blind_radius = false;
         if(config_.auto_voxel_size)
         {
+            if (laserCloudSurfLast->empty()) {
+                laserCloudCornerStack->clear();
+                laserCloudSurfStack->clear();
+                RCLCPP_WARN_THROTTLE(
+                    this->get_logger(), *this->get_clock(), 5000,
+                    "Received an empty surface cloud; skipping voxel adjustment");
+                return;
+            }
             Eigen::Vector3f average(0,0,0);
             int count_far_points = 0;
             for (auto &point : *laserCloudSurfLast)
@@ -652,30 +670,31 @@ return PredictionSource::CONSTANT_VELOCITY;
 
     
     bool  laserMapping::checkDataAvailable() const{
-        return !cornerLastBuf.empty() && !surfLastBuf.empty() 
-               && !fullResBuf.empty() && !IMUPredictionBuf.empty();       
-        //Note: in pure laser odometry, IMU Prediction will be identy. 
+        return !featureBuf.empty();
     }
 
-    laserMapping::SensorData laserMapping::extractSensorData(){
+    laserMapping::SensorData laserMapping::extractSensorData(
+        const super_odometry_msgs::msg::LaserFeature::SharedPtr &msg){
         
         SensorData data;
         //1. Extract timestamp
-        data.timestamp=secs(&fullResBuf.front());
+        data.timestamp=secs(msg);
         timeLaserOdometry=data.timestamp;
 
         //2. Extract point cloud data 
-        pcl::fromROSMsg(cornerLastBuf.front(), *laserCloudCornerLast);
-        cornerLastBuf.pop();
-        pcl::fromROSMsg(surfLastBuf.front(), *laserCloudSurfLast);
-        surfLastBuf.pop();
-        pcl::fromROSMsg(fullResBuf.front(), *laserCloudFullRes);
-        fullResBuf.pop();
+        pcl::fromROSMsg(msg->cloud_corner, *laserCloudCornerLast);
+        pcl::fromROSMsg(msg->cloud_surface, *laserCloudSurfLast);
+        if (pubLaserCloudFullRes->get_subscription_count() > 0) {
+            pcl::fromROSMsg(msg->cloud_nodistortion, *laserCloudFullRes);
+        } else {
+            laserCloudFullRes->clear();
+        }
 
         //3. Extract IMU prediction 
-        data.imuPrediction=IMUPredictionBuf.front();
+        data.imuPrediction = Eigen::Quaterniond(
+            msg->initial_quaternion_w, msg->initial_quaternion_x,
+            msg->initial_quaternion_y, msg->initial_quaternion_z);
         data.imuPrediction.normalize();
-        IMUPredictionBuf.pop();
 
         //4 set status for prediction source (TODO: didn't release code other prediction source yet) 
         data.vio_prediction_status=false;
@@ -686,24 +705,12 @@ return PredictionSource::CONSTANT_VELOCITY;
         return data;
     }
 
-    void laserMapping::clearSensorData(){
-        auto clearBuffer=[](auto&buffer){
-            while(!buffer.empty()){
-                buffer.pop();
-            }
-        };
-        clearBuffer(cornerLastBuf);
-        clearBuffer(surfLastBuf);
-        clearBuffer(fullResBuf);
-        clearBuffer(IMUPredictionBuf);
-    }
-
-
     void laserMapping::performSLAMOptimization(){
         tf2::Quaternion imu_roll_pitch;
         if(config_.use_imu_roll_pitch){  // TODO: Livox mid360 not use roll pitch angle
             slam.OptSet.use_imu_roll_pitch=true;
-            imu_roll_pitch=utils::extractRollPitch(sensorMeas.imuPrediction);
+            Eigen::Quaterniond aligned = alignedImuPrediction(sensorMeas.imuPrediction);
+            imu_roll_pitch=utils::extractRollPitch(aligned);
             slam.OptSet.imu_roll_pitch=imu_roll_pitch;
         }else{
             slam.OptSet.use_imu_roll_pitch=false;
@@ -718,7 +725,7 @@ return PredictionSource::CONSTANT_VELOCITY;
     bool laserMapping::useIMUPrediction(const Eigen::Quaterniond& imuPrediction){
         if (imuPrediction.w()!=0)
         {
-            q_wodom_curr=imuPrediction;
+            q_wodom_curr=alignedImuPrediction(imuPrediction);
             q_wodom_curr.normalize();
             return true;
         }
@@ -766,30 +773,45 @@ return PredictionSource::CONSTANT_VELOCITY;
     }
 
     void laserMapping::process() {
-
-        while (rclcpp::ok()) {
-            if(!checkDataAvailable()){
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
-                continue;
+        super_odometry_msgs::msg::LaserFeature::SharedPtr feature_msg;
+        {
+            std::lock_guard<std::mutex> lock(mBuf);
+            if (!checkDataAvailable()) {
+                return;
             }
-            try{
-                utils::ScopedTimer timer("Frame Processing");
-                mBuf.lock(); 
-                sensorMeas=extractSensorData();
-                clearSensorData();
-                mBuf.unlock();
-                setInitialGuess();
-                adjustVoxelSize();
-                performSLAMOptimization();
-                updatePoseAndPublish();
-               
-                //updateStatsAndDebugInfo();
-
-            }catch(const std::exception&e){
-                RCLCPP_ERROR(this->get_logger(), "Error in frame processing: %s", e.what());
-            }
+            feature_msg = featureBuf.front();
+            featureBuf.pop_front();
         }
 
+        const auto frame_start = std::chrono::steady_clock::now();
+        try {
+            sensorMeas = extractSensorData(feature_msg);
+            setInitialGuess();
+            adjustVoxelSize();
+            performSLAMOptimization();
+            updatePoseAndPublish();
+            ++processed_feature_frames_;
+        } catch(const std::exception &e) {
+            RCLCPP_ERROR(this->get_logger(), "Error in frame processing: %s", e.what());
+        }
+
+        const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - frame_start).count();
+        if (elapsed_ms > 100) {
+            std::size_t queued_frames = 0;
+            {
+                std::lock_guard<std::mutex> lock(mBuf);
+                queued_frames = featureBuf.size();
+            }
+            RCLCPP_WARN_THROTTLE(
+                this->get_logger(), *this->get_clock(), 5000,
+                "Mapping is slower than 10 Hz: last frame %ld ms, queue %zu, "
+                "received %lu, processed %lu, dropped %lu",
+                elapsed_ms, queued_frames,
+                static_cast<unsigned long>(received_feature_frames_.load()),
+                static_cast<unsigned long>(processed_feature_frames_.load()),
+                static_cast<unsigned long>(dropped_feature_frames_.load()));
+        }
     }
 
 

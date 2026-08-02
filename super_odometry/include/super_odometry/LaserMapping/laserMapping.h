@@ -7,7 +7,10 @@
 #define super_odometry_LASERMAPPING_H
 
 #include <cmath>
+#include <atomic>
+#include <cstdint>
 #include <iostream>
+#include <deque>
 #include <queue>
 #include <string>
 #include <vector>
@@ -50,7 +53,11 @@ namespace super_odometry {
         bool enable_ouster_data;
         bool publish_only_feature_points;
         bool use_imu_roll_pitch;
+        double imu_roll_pitch_weight;
         int max_surface_features;
+        int map_update_interval;
+        int path_publish_stride;
+        int max_feature_queue_size;
         double velocity_failure_threshold;
         bool auto_voxel_size;
         bool forget_far_chunks;
@@ -145,11 +152,13 @@ namespace super_odometry {
 
         bool checkDataAvailable() const;
 
-        SensorData extractSensorData();
-
-        void clearSensorData();
+        SensorData extractSensorData(
+            const super_odometry_msgs::msg::LaserFeature::SharedPtr &msg);
 
         bool useIMUPrediction(const Eigen::Quaterniond& imuPrediction);
+
+        Eigen::Quaterniond alignedImuPrediction(
+            const Eigen::Quaterniond& imuPrediction) const;
 
         void performSLAMOptimization();
 
@@ -255,6 +264,10 @@ namespace super_odometry {
         std::queue<nav_msgs::msg::Odometry::SharedPtr> odometryBuf;
         std::queue<Eigen::Quaterniond> IMUPredictionBuf;
         std::queue<SensorType> sensorTypeLastBuf;
+        std::deque<super_odometry_msgs::msg::LaserFeature::SharedPtr> featureBuf;
+        std::atomic<std::uint64_t> received_feature_frames_{0};
+        std::atomic<std::uint64_t> processed_feature_frames_{0};
+        std::atomic<std::uint64_t> dropped_feature_frames_{0};
         SensorType last_sensor_type_= SensorType::VELODYNE;
      
         
@@ -297,6 +310,8 @@ namespace super_odometry {
         Eigen::Quaterniond q_wodom_pre;
         Eigen::Vector3d t_wodom_pre;
         Eigen::Quaterniond q_w_imu_pre;
+        Eigen::Quaterniond imu_world_alignment{Eigen::Quaterniond::Identity()};
+        bool imu_world_alignment_initialized = false;
         Eigen::Vector3d t_w_imu_pre;
 
 

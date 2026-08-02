@@ -31,13 +31,15 @@ namespace super_odometry {
         rclcpp::SubscriptionOptions sub_options;
         sub_options.callback_group = cb_group_;
 
-        rclcpp::QoS imu_qos(10);
+        rclcpp::QoS imu_qos(200);
         imu_qos.best_effort();  // Use BEST_EFFORT reliability
-        imu_qos.keep_last(10);  // Keep last 10 messages
+        imu_qos.keep_last(200); // Retain enough IMU data while a cloud is converted
 
-        rclcpp::QoS laser_qos(10);
-        laser_qos.best_effort();  // Use BEST_EFFORT reliability
-        laser_qos.keep_last(2);  // Keep last 10 messages
+        // The recorded Hesai publisher is RELIABLE/depth 10. BEST_EFFORT with
+        // depth 2 silently lost more than half of the 1.66 MB scans during
+        // replay, producing multi-second registration gaps in the stairwell.
+        rclcpp::QoS laser_qos(rclcpp::KeepLast(20));
+        laser_qos.reliable();
 
         if(!readGlobalparam(shared_from_this()))
         {
@@ -176,57 +178,6 @@ namespace super_odometry {
     }
 
 
-    template <typename Meas>
-    bool featureExtraction::synchronize_measurements(MapRingBuffer<Meas> &measureBuf,
-                                                     MapRingBuffer<pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr> &lidarBuf)
-    {
-
-        if (lidarBuf.getSize() == 0 or measureBuf.getSize() == 0)
-            return false;
-
-        double lidar_start_time;
-        lidarBuf.getFirstTime(lidar_start_time);
-
-        pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr lidar_msg;
-        lidarBuf.getFirstMeas(lidar_msg);
-
-        double lidar_end_time = lidar_start_time + lidar_msg->back().time;
-
-        // obtain the current imu message
-        double meas_start_time=0;
-        measureBuf.getFirstTime(meas_start_time);
-
-        double meas_end_time=0;
-        measureBuf.getLastTime(meas_end_time);
-
-        if (meas_end_time <= lidar_end_time) // make sure imu message arrives after lidar message
-        {
-            RCLCPP_WARN_STREAM(this->get_logger(), "meas_end_time < lidar_end_time ||"
-                            " message order is not perfect! please restart velodyne and imu driver!");
-            RCLCPP_WARN(this->get_logger(), "meas_end_time %f <  %f lidar_end_time", meas_end_time, lidar_end_time);
-            RCLCPP_WARN(this->get_logger(), "All the lidar data is more recent than all the imu data. Will throw away lidar frame");
-
-            return false;
-        }
-
-        if (meas_start_time >= lidar_start_time)          
-        {
-            RCLCPP_WARN(this->get_logger(), "throw laser scan, only should happen at the beginning");
-            lidarBuf.clean(lidar_start_time);
-            RCLCPP_WARN(this->get_logger(), "removed the lidarBuf size % d, measureBuf size % d ", lidarBuf.getSize(), measureBuf.getSize());
-            RCLCPP_WARN(this->get_logger(), "meas_start_time: %f > lidar_start_time: %f ", meas_start_time, lidar_start_time);
-            return false;
-        }
-        else
-        {
-            return true;
-        }
-        
-    }
-
-
-    
-
     template<typename BufferType>
     void featureExtraction::removePointDistortion(
         double lidar_start_time, 
@@ -262,17 +213,18 @@ namespace super_odometry {
          // Step 2: Get interpolated poses directly
         auto getInterpolatedPoseAtTime = [&buffer, &extractPose](double timestamp) -> Transformd {
         auto after_ptr = buffer.measMap_.upper_bound(timestamp);
-        if (after_ptr->first < 0.0001) {
-            after_ptr = buffer.measMap_.begin();
-        }
-
         if (after_ptr == buffer.measMap_.begin()) {
             return extractPose(after_ptr->second);
         }
+        if (after_ptr == buffer.measMap_.end()) {
+            return extractPose(buffer.measMap_.rbegin()->second);
+        }
 
         auto before_ptr = std::prev(after_ptr);
-        double ratio = (timestamp - before_ptr->first) / 
-                      (after_ptr->first - before_ptr->first);
+        const double interval = after_ptr->first - before_ptr->first;
+        const double ratio = interval > 1e-9
+            ? std::clamp((timestamp - before_ptr->first) / interval, 0.0, 1.0)
+            : 0.0;
 
         Transformd before_pose = extractPose(before_ptr->second);
         Transformd after_pose = extractPose(after_ptr->second);
@@ -331,17 +283,18 @@ namespace super_odometry {
         const std::function<Transformd(const BufferType&)>& extractPose)
     {
         auto after_ptr = buffer.measMap_.upper_bound(timestamp);
-        if (after_ptr->first < 0.0001) {
-            after_ptr = buffer.measMap_.begin();
-        }
-
         if (after_ptr == buffer.measMap_.begin()) {
             return extractPose(after_ptr->second);
         }
+        if (after_ptr == buffer.measMap_.end()) {
+            return extractPose(buffer.measMap_.rbegin()->second);
+        }
 
         auto before_ptr = std::prev(after_ptr);
-        double ratio = (timestamp - before_ptr->first) / 
-                    (after_ptr->first - before_ptr->first);
+        const double interval = after_ptr->first - before_ptr->first;
+        const double ratio = interval > 1e-9
+            ? std::clamp((timestamp - before_ptr->first) / interval, 0.0, 1.0)
+            : 0.0;
 
         Transformd before_pose = extractPose(before_ptr->second);
         Transformd after_pose = extractPose(after_ptr->second);
@@ -445,68 +398,95 @@ namespace super_odometry {
     }
 
 
-    void featureExtraction::undistortionAndFeatureExtraction()      
+    bool featureExtraction::processPendingLidar()
     {
-        LASER_IMU_SYNC_SCCUESS = synchronize_measurements<Imu::Ptr>(imuBuf, lidarBuf);
-        LASER_CAMERA_SYNC_SUCCESS = synchronize_measurements<nav_msgs::msg::Odometry::SharedPtr>(visualOdomBuf, lidarBuf);
+        std::unique_lock<std::mutex> processing_lock(processing_mutex_, std::try_to_lock);
+        if (!processing_lock.owns_lock()) {
+            return false;
+        }
 
-        if (frameCount > 100 and LASER_CAMERA_SYNC_SUCCESS == true)
-            LASER_CAMERA_SYNC_SUCCESS = true;
-        else
-            LASER_CAMERA_SYNC_SUCCESS = false;
+        double lidar_start_time = 0.0;
+        double lidar_end_time = 0.0;
+        pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr lidar_msg;
+        MapRingBuffer<Imu::Ptr> scan_imu_buf;
+        scan_imu_buf.allocate(5000);
+        bool lidar_only = IMU_TOPIC.empty();
 
-        if ((LASER_IMU_SYNC_SCCUESS == true or LASER_CAMERA_SYNC_SUCCESS == true) and lidarBuf.getSize() > 0)
         {
-            double lidar_start_time;
-            lidarBuf.getFirstTime(lidar_start_time);
-            pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr lidar_msg;
-            lidarBuf.getFirstMeas(lidar_msg);
-
-            double lidar_end_time = lidar_start_time + lidar_msg->back().time;
-
-            if (LASER_IMU_SYNC_SCCUESS == true and LASER_CAMERA_SYNC_SUCCESS == true)
-            {
-                RCLCPP_INFO(this->get_logger(), "\033[1;32m----> Both IMU ,VIO laserscan are synchronized!.\033[0m");
-                removePointDistortion<nav_msgs::msg::Odometry::SharedPtr>(lidar_start_time, lidar_end_time, visualOdomBuf, lidar_msg);
+            std::lock_guard<std::mutex> buffer_lock(m_buf);
+            if (lidarBuf.empty()) {
+                return false;
             }
 
-            if (LASER_IMU_SYNC_SCCUESS == false and LASER_CAMERA_SYNC_SUCCESS == true)
-            {
-                removePointDistortion<nav_msgs::msg::Odometry::SharedPtr>(lidar_start_time, lidar_end_time, visualOdomBuf, lidar_msg);
+            auto lidar_it = lidarBuf.measMap_.begin();
+            lidar_start_time = lidar_it->first;
+            lidar_msg = lidar_it->second;
+            if (!lidar_msg || lidar_msg->empty()) {
+                lidarBuf.measMap_.erase(lidar_it);
+                ++stale_lidar_frames_;
+                return false;
             }
 
-            if (LASER_IMU_SYNC_SCCUESS == true and LASER_CAMERA_SYNC_SUCCESS == false)
-            {
-                // RCLCPP_INFO(this->get_logger(), "\033[1;32m----> IMU and laserscan is synchronized!.\033[0m");
-                removePointDistortion<Imu::Ptr>(lidar_start_time, lidar_end_time, imuBuf, lidar_msg);
+            float max_relative_time = 0.0f;
+            for (const auto &point : lidar_msg->points) {
+                if (std::isfinite(point.time)) {
+                    max_relative_time = std::max(max_relative_time, point.time);
+                }
+            }
+            lidar_end_time = lidar_start_time + max_relative_time;
+
+            if (!lidar_only) {
+                if (!IMU_INIT || imuBuf.empty()) {
+                    return false;
+                }
+
+                auto sample_before_start = imuBuf.measMap_.upper_bound(lidar_start_time);
+                if (sample_before_start == imuBuf.measMap_.begin()) {
+                    lidarBuf.measMap_.erase(lidar_it);
+                    ++stale_lidar_frames_;
+                    RCLCPP_WARN_THROTTLE(
+                        this->get_logger(), *this->get_clock(), 5000,
+                        "Dropping stale LiDAR frame without an IMU sample before scan start "
+                        "(total stale: %lu)", static_cast<unsigned long>(stale_lidar_frames_));
+                    return false;
+                }
+                --sample_before_start;
+
+                auto sample_after_end = imuBuf.measMap_.upper_bound(lidar_end_time);
+                if (sample_after_end == imuBuf.measMap_.end()) {
+                    // The next IMU callback will retry this same LiDAR frame.
+                    return false;
+                }
+
+                for (auto it = sample_before_start;; ++it) {
+                    scan_imu_buf.measMap_.emplace(it->first, it->second);
+                    if (it == sample_after_end) {
+                        break;
+                    }
+                }
+
+                // Retain one sample preceding future scans while bounding memory.
+                auto keep_from = imuBuf.measMap_.lower_bound(lidar_start_time);
+                if (keep_from != imuBuf.measMap_.begin()) {
+                    --keep_from;
+                    imuBuf.measMap_.erase(imuBuf.measMap_.begin(), keep_from);
+                }
             }
 
-            // Extract features and publish
-            extractFeatures(lidar_start_time, lidar_msg, q_w_original_l);
+            lidarBuf.measMap_.erase(lidar_it);
+        }
 
-            LASER_CAMERA_SYNC_SUCCESS = false;
-            LASER_IMU_SYNC_SCCUESS = false;
-        
+        if (lidar_only) {
+            q_w_original_l = Eigen::Quaterniond::Identity();
+            t_w_original_l = Eigen::Vector3d::Zero();
+        } else {
+            removePointDistortion<Imu::Ptr>(
+                lidar_start_time, lidar_end_time, scan_imu_buf, lidar_msg);
         }
-        else if (imuBuf.empty())
-        {
-            double lidar_start_time;
-            lidarBuf.getFirstTime(lidar_start_time);
-            pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr lidar_msg;
-            lidarBuf.getFirstMeas(lidar_msg);
-            double lidar_end_time = lidar_start_time + lidar_msg->back().time;
 
-            RCLCPP_INFO(this->get_logger(), "\033[1;32m----> no IMU data, running LiDAR Odometry only.\033[0m");
-            Eigen::Quaterniond default_quaternion = Eigen::Quaterniond::Identity();
-            
-            // Extract features and publish with default quaternion
-            extractFeatures(lidar_start_time, lidar_msg, default_quaternion);
-        }
-        else
-        {
-            RCLCPP_WARN(this->get_logger(), "sync unsuccessfull, skipping scan frame");
-        }
-        
+        extractFeatures(lidar_start_time, lidar_msg, q_w_original_l);
+        ++processed_lidar_frames_;
+        return true;
     }
 
     void featureExtraction::uniformFeatureExtraction(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &pc_in, 
@@ -520,9 +500,9 @@ namespace super_odometry {
             point.z=pc_in->points[i].z;
             point.intensity=pc_in->points[i].time;
 
-            if ((abs(pc_in->points[i].x - pc_in->points[i-1].x) > 1e-7)
+            if (((abs(pc_in->points[i].x - pc_in->points[i-1].x) > 1e-7)
                 || (abs(pc_in->points[i].y - pc_in->points[i-1].y) > 1e-7)
-                || (abs(pc_in->points[i].z - pc_in->points[i-1].z) > 1e-7)
+                || (abs(pc_in->points[i].z - pc_in->points[i-1].z) > 1e-7))
                 && (pc_in->points[i].x * pc_in->points[i].x + pc_in->points[i].y * pc_in->points[i].y + pc_in->points[i].z * pc_in->points[i].z > (block_range * block_range)))
             {
                 pc_out_surf->push_back(point);
@@ -545,6 +525,13 @@ namespace super_odometry {
                                                 msg->orientation.x,
                                                 msg->orientation.y,
                                                 msg->orientation.z);
+        const double orientation_norm = measurement.orientation.norm();
+        measurement.orientation_valid =
+            std::isfinite(orientation_norm) && orientation_norm > 0.5 &&
+            msg->orientation_covariance[0] >= 0.0;
+        if (measurement.orientation_valid) {
+            measurement.orientation.normalize();
+        }
         return measurement;
     }
 
@@ -579,12 +566,24 @@ namespace super_odometry {
         return imudata;
     }
 
-    void featureExtraction::updateImuOrientation(Imu::Ptr& imudata) {
-        if (!imuBuf.empty()) {
+    void featureExtraction::updateImuOrientation(
+        Imu::Ptr& imudata, const ImuMeasurement& measurement) {
+        if (measurement.orientation_valid) {
+            if (!imu_orientation_reference_initialized_) {
+                imu_orientation_reference_ = measurement.orientation;
+                imu_orientation_reference_initialized_ = true;
+            }
+            imudata->q_w_i =
+                imu_orientation_reference_.conjugate() * measurement.orientation;
+            imudata->q_w_i.normalize();
+        } else if (!imuBuf.empty()) {
             const auto& last_imu = imuBuf.measMap_.rbegin()->second;
             const double dt = imudata->time - last_imu->time;
-            
-            Eigen::Vector3d delta_angle = dt * 0.5 * (imudata->gyr + last_imu->gyr);
+
+            const Eigen::Vector3d bias = IMU_INIT
+                ? imu_Init->gyr_bias : Eigen::Vector3d::Zero();
+            Eigen::Vector3d delta_angle =
+                dt * 0.5 * (imudata->gyr + last_imu->gyr - 2.0 * bias);
             Eigen::Quaterniond delta_r = Sophus::SO3d::exp(delta_angle).unit_quaternion();
             
             imudata->q_w_i = last_imu->q_w_i * delta_r;
@@ -620,28 +619,25 @@ namespace super_odometry {
                 imu_Init->imuInit(imuBuf);
                 IMU_INIT = true;
                 imuBuf.clean(timestamp);
+                lidarBuf.clean(timestamp);
                 RCLCPP_INFO(this->get_logger(), "IMU Initialization Process Finish!");
             }
         }
     }
 
     void featureExtraction::imu_Handler(const sensor_msgs::msg::Imu::SharedPtr msg_in) {
-        m_buf.lock();
-        
-        auto measurement = parseImuMessage(msg_in);
-        
-        calculateDeltaTime(measurement.timestamp);
-        
-        auto imudata = createImuData(measurement);
-        
-        updateImuOrientation(imudata);
-        
-        imuBuf.addMeas(imudata, measurement.timestamp);
-        
-        // only do it at the beginning
-        imuInitialization(measurement.timestamp);
-        
-        m_buf.unlock();
+        {
+            std::lock_guard<std::mutex> lock(m_buf);
+            auto measurement = parseImuMessage(msg_in);
+            calculateDeltaTime(measurement.timestamp);
+            auto imudata = createImuData(measurement);
+            updateImuOrientation(imudata, measurement);
+            imuBuf.addMeas(imudata, measurement.timestamp);
+
+            // Only do this at startup.
+            imuInitialization(measurement.timestamp);
+        }
+        processPendingLidar();
     }
 
     void featureExtraction::visual_odom_Handler(const nav_msgs::msg::Odometry::SharedPtr visualOdometry)
@@ -786,12 +782,10 @@ namespace super_odometry {
 
     void featureExtraction::laserCloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg)
     {  
-        // Check if we should process this frame based on skip count
-        frameCount = frameCount + 1;
-        if (frameCount % config_.skipFrame != 0)
+        // Check if we should process this frame based on skip count.
+        const int current_frame = ++frameCount;
+        if (current_frame % config_.skipFrame != 0)
             return;
-
-        m_buf.lock();
 
         pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr pointCloud(
             new pcl::PointCloud<point_os::PointcloudXYZITR>());
@@ -809,7 +803,6 @@ namespace super_odometry {
             else if (config_.sensor == SensorType::HESAI)
             {
                 if (!convertHesaiPointCloud(laserCloudMsg, pointCloud)) {
-                    m_buf.unlock();
                     return;
                 }
             }
@@ -842,27 +835,22 @@ namespace super_odometry {
             pointCloud = pointCloudwithTime;
         }
 
-        manageLidarBuffer(pointCloud, laserCloudMsg->header.stamp.sec + laserCloudMsg->header.stamp.nanosec * 1e-9);
-
-        if(IMU_INIT==true or imuBuf.empty())
-        {   
-            undistortionAndFeatureExtraction();
-            double lidar_first_time;
-            lidarBuf.getFirstTime(lidar_first_time);
-            lidarBuf.clean(lidar_first_time);
+        {
+            std::lock_guard<std::mutex> lock(m_buf);
+            manageLidarBuffer(
+                pointCloud,
+                laserCloudMsg->header.stamp.sec +
+                    laserCloudMsg->header.stamp.nanosec * 1e-9);
         }
-
-        m_buf.unlock();
+        processPendingLidar();
     }
 
 
     void featureExtraction::livoxHandler(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
     {   
-        frameCount = frameCount + 1;
-        if (frameCount % config_.skipFrame != 0)
+        const int current_frame = ++frameCount;
+        if (current_frame % config_.skipFrame != 0)
             return; 
-
-        m_buf.lock();
         
         pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr pointCloud(
             new pcl::PointCloud<point_os::PointcloudXYZITR>());
@@ -893,17 +881,13 @@ namespace super_odometry {
             rclcpp::shutdown();
         }
 
-        manageLidarBuffer(pointCloud, msg->header.stamp.sec + msg->header.stamp.nanosec*1e-9);
-
-        if(IMU_INIT==true or imuBuf.empty())
-        {   
-            undistortionAndFeatureExtraction();
-            double lidar_first_time;
-            lidarBuf.getFirstTime(lidar_first_time);
-            lidarBuf.clean(lidar_first_time);
+        {
+            std::lock_guard<std::mutex> lock(m_buf);
+            manageLidarBuffer(
+                pointCloud,
+                msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9);
         }
-
-        m_buf.unlock();
+        processPendingLidar();
     }
 
     void featureExtraction::manageLidarBuffer(

@@ -145,8 +145,9 @@ namespace super_odometry {
         //Check for convergence 
         
         if ((summary.num_successful_steps == 1) ||(icp_iter == this->LocalizationICPMaxIter - 1)) {
-            this->LocalizationUncertainty =
-                    EstimateRegistrationError(problem, 100);
+            // Dense-SVD covariance was previously computed here on every frame,
+            // but the result was never consumed. It dominated runtime as the
+            // map grew and caused input frames to be discarded upstream.
             break;
         
         }
@@ -173,31 +174,34 @@ namespace super_odometry {
         }
         
         // Update timing
+        last_T_w_lidar = T_w_lidar;
         lasttimeLaserOdometry = timeLaserOdometry;
     }
 
     bool LidarSLAM::checkMotionThresholds(double timeLaserOdometry, super_odometry_msgs::msg::OptimizationStats &stats) {
     
-        bool acceptResult = true;
         double delta_t = timeLaserOdometry - lasttimeLaserOdometry;
+        if (!std::isfinite(delta_t) || delta_t <= 0.0) {
+            return false;
+        }
         
         // Check velocity threshold
         if (stats.translation_from_last/delta_t > OptSet.velocity_failure_threshold) {
-            T_w_lidar = last_T_w_lidar;
+            T_w_lidar = T_w_initial_guess;
             startupCount = 5;
-            acceptResult = false;
             RCLCPP_WARN(node_->get_logger(), "large motion detected, ignoring predictor for a while");
+            return false;
         }
         
-        // Check small motion threshold
+        // Keep the optimized pose, but do not insert almost-identical scans.
         if (stats.translation_from_last < 0.02 && stats.rotation_from_last < 0.005) {
-            acceptResult = false;
-            T_w_lidar = last_T_w_lidar;
             RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000,
                                 "very small motion, not accumulating. %f", stats.translation_from_last);
+            return false;
         }
-    acceptResult = true;
-    return acceptResult;
+
+        const int interval = std::max(1, OptSet.map_update_interval);
+        return frame_count % interval == 0;
 }
 
 
@@ -212,7 +216,6 @@ namespace super_odometry {
 
         stats.translation_from_last = diff_from_last_T.pos.norm();
         stats.rotation_from_last = 2 * atan2(diff_from_last_T.rot.vec().norm(), diff_from_last_T.rot.w());
-        last_T_w_lidar=T_w_lidar;
     }
 
 
@@ -224,6 +227,15 @@ namespace super_odometry {
 
         //Add feature constraints
         addFeatureConstraints(problem, features_corres);
+
+        if (OptSet.use_imu_roll_pitch) {
+            const Eigen::Quaterniond q_w_sensor(
+                OptSet.imu_roll_pitch.w(), OptSet.imu_roll_pitch.x(),
+                OptSet.imu_roll_pitch.y(), OptSet.imu_roll_pitch.z());
+            auto *gravity_cost = new GravityAlignmentFactor(
+                q_w_sensor, OptSet.imu_roll_pitch_weight);
+            problem.AddResidualBlock(gravity_cost, nullptr, pose_parameters);
+        }
 
        
         //Add absolute pose constraints if needed 

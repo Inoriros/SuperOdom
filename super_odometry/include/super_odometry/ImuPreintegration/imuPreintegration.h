@@ -115,7 +115,11 @@ namespace super_odometry {
 
         void publishTransformsAndPath(nav_msgs::msg::Odometry &odometry, const sensor_msgs::msg::Imu& thisImu);
 
-        void processTiming(const sensor_msgs::msg::Imu& thisImu);
+        bool processTiming(const sensor_msgs::msg::Imu& thisImu);
+
+        bool isPropagatedStateValid(
+            const sensor_msgs::msg::Imu& thisImu,
+            const gtsam::NavState& currentState) const;
 
         void initializeImu(const sensor_msgs::msg::Imu::SharedPtr& imu_raw);
 
@@ -126,7 +130,7 @@ namespace super_odometry {
         imuConverter(const sensor_msgs::msg::Imu &imu_in);
 
         template<typename T>
-        double secs(T msg) {
+        double secs(T msg) const {
             return msg->header.stamp.sec + msg->header.stamp.nanosec*1e-9;
         }
 
@@ -187,7 +191,7 @@ namespace super_odometry {
 
        
         Eigen::Quaterniond firstImu;
-        Eigen::Vector3d gyr_pre;
+        Eigen::Vector3d gyr_pre = Eigen::Vector3d::Zero();
 
         double first_imu_time_stamp;
         double last_processed_lidar_time = -1;
@@ -203,7 +207,7 @@ namespace super_odometry {
         UNKNOW=2
         };  
 
-        IMU_STATE RESULT;
+        IMU_STATE RESULT = IMU_STATE::UNKNOW;
         nav_msgs::msg::Odometry::SharedPtr cur_frame = nullptr;
         nav_msgs::msg::Odometry::SharedPtr last_frame = nullptr;
         imuPreintegration_config config_;

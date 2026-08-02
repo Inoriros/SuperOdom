@@ -14,7 +14,7 @@ public:
   std::map<double, Meas> measMap_;
   typename std::map<double, Meas>::iterator itMeas_;
 
-  int size;
+  int size = 0;
   double maxWaitTime_;
   double minWaitTime_;
 
@@ -40,7 +40,7 @@ public:
     measMap_.insert(std::make_pair(t, meas));
 
     // ensure the size of the map, and remove the last element
-    if ((int) measMap_.size() > size) {
+    if (size > 0 && static_cast<int>(measMap_.size()) > size) {
       measMap_.erase(measMap_.begin());
     }
   }

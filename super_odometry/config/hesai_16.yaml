@@ -28,6 +28,11 @@
         mapping_plane_resolution: 0.2
         max_iterations: 5
         max_surface_features: 2000
+        use_imu_roll_pitch: true
+        imu_roll_pitch_weight: 100.0
+        map_update_interval: 2
+        path_publish_stride: 10
+        max_feature_queue_size: 20
 
         # For localization mode
         localization_mode: false
