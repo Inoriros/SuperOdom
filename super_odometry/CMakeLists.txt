@@ -36,6 +36,7 @@ find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(image_transport REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(tf2 REQUIRED)
@@ -52,6 +53,7 @@ find_package(Ceres REQUIRED)
 find_package(GTSAM REQUIRED QUIET)
 find_package(TBB REQUIRED)
 find_package(livox_ros_driver2 REQUIRED)
+find_package(Threads REQUIRED)
 
 # Include directories
 include_directories(
@@ -150,6 +152,23 @@ target_link_libraries(laser_mapping_node
     SuperOdomLib
 )
 
+# Standalone disk-backed campus map node
+add_executable(campus_map_node
+  src/campus_map_node.cpp
+  src/CampusMap/campus_map.cpp
+)
+ament_target_dependencies(campus_map_node
+  rclcpp
+  nav_msgs
+  sensor_msgs
+  std_srvs
+  pcl_conversions
+)
+target_link_libraries(campus_map_node
+  ${PCL_LIBRARIES}
+  Threads::Threads
+)
+
 # Install Exported Libraries
 ament_export_targets(export_super_odometry HAS_LIBRARY_TARGET)
 
@@ -175,6 +194,7 @@ install(TARGETS
   imu_preintegration_node
   feature_extraction_node
   laser_mapping_node
+  campus_map_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

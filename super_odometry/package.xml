@@ -15,7 +15,7 @@
 
   <license>BSD</license>
  
-  <buildtool_depend>amend_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
   <depend>rclpy</depend>
@@ -24,10 +24,11 @@
   <depend>nav_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>super_odometry_msgs</depend>
   <depend>image_transport</depend>
   <!-- <depend>tf_conversions</depend> -->
-  <depend>pcl_conversion</depend>
+  <depend>pcl_conversions</depend>
   <depend>sophus</depend>
   <depend>livox_ros_driver2</depend>
   

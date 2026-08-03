@@ -8,6 +8,7 @@
 ./build
 ./install
 ./log
+/maps/
 __pycache__
 *.pyc
 *.pyo

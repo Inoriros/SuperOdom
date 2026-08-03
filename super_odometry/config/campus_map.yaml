@@ -1,0 +1,23 @@
+campus_map_node:
+  ros__parameters:
+    input_cloud_topic: "/registered_scan0"
+    odometry_topic: "/laser_odometry"
+    local_map_topic: "/campus_map/local"
+    map_frame: "map"
+    map_directory: "/root/ros2_ws/src/SuperOdom/maps"
+
+    voxel_size: 0.20
+    tile_size: 50.0
+    min_insertion_range: 0.8
+    max_insertion_range: 80.0
+    scan_stride: 2
+    max_observations_per_voxel: 100
+
+    local_publish_radius: 60.0
+    resident_radius: 120.0
+    eviction_radius: 150.0
+    max_resident_tiles: 64
+
+    max_pending_scans: 2
+    publish_period: 2.0
+    checkpoint_period: 60.0
